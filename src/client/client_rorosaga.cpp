@@ -48,60 +48,75 @@ class AggressiveTargetBot {
 
     // Find the closest opponent's position using Manhattan distance
     Player* findNearestOpponent() {
-        sf::Vector2i myPos = myPlayer.position;
-        Player* nearestOpponent = nullptr;
-        int minDistance = std::numeric_limits<int>::max();
+        try {
+            sf::Vector2i myPos = myPlayer.position;
+            Player* nearestOpponent = nullptr;
+            int minDistance = std::numeric_limits<int>::max();
 
-        for (auto &player : state.players) {
-            if (player.id != myPlayer.id) { // Skip self
-                int distance = calculateDistance(myPos, player.position);
-                if (distance < minDistance) {
-                    minDistance = distance;
-                    nearestOpponent = &player;
+            for (auto &player : state.players) {
+                if (player.id != myPlayer.id) { // Skip self
+                    int distance = calculateDistance(myPos, player.position);
+                    if (distance < minDistance) {
+                        minDistance = distance;
+                        nearestOpponent = &player;
+                    }
                 }
             }
+            return nearestOpponent;
+        } catch (const std::exception &e) {
+            spdlog::error("Error finding nearest opponent: {}", e.what());
+            return nullptr;
         }
-        return nearestOpponent;
     }
 
-    // Predict the opponent's next move based on their position
+    // Predict the opponent's next move
     sf::Vector2i predictOpponentMove(Player* opponent) {
-        sf::Vector2i oppPos = opponent->position;
-
-        for (Direction direction : {Direction::north, Direction::east, Direction::south, Direction::west}) {
-            sf::Vector2i newPos = oppPos + getDirectionVector(direction);
-            if (state.isInsideGrid(newPos) && state.isCellEmpty(newPos)) {
-                return newPos; // Return the first valid move
-            }
-        }
-        return oppPos; // No valid moves, opponent might stay in place
-    }
-
-    // Calculate available space from a position
-    int calculateAvailableSpace(sf::Vector2i pos) {
-        int space = 0;
-        std::queue<sf::Vector2i> toVisit;
-        std::set<sf::Vector2i, Vector2Comparator> visited; // Use custom comparator to avoid errors
-
-        toVisit.push(pos);
-        visited.insert(pos);
-
-        while (!toVisit.empty() && space < 20) { // Limit to avoid over-expanding
-            sf::Vector2i current = toVisit.front();
-            toVisit.pop();
-            space++;
+        try {
+            sf::Vector2i oppPos = opponent->position;
 
             for (Direction direction : {Direction::north, Direction::east, Direction::south, Direction::west}) {
-                sf::Vector2i neighbor = current + getDirectionVector(direction);
-                if (state.isInsideGrid(neighbor) && state.isCellEmpty(neighbor) &&
-                    visited.find(neighbor) == visited.end()) {
-                    visited.insert(neighbor);
-                    toVisit.push(neighbor);
+                sf::Vector2i newPos = oppPos + getDirectionVector(direction);
+                if (state.isInsideGrid(newPos) && state.isCellEmpty(newPos)) {
+                    return newPos;
                 }
             }
+            return oppPos; // No valid moves, opponent might stay in place
+        } catch (const std::exception &e) {
+            spdlog::warn("Error predicting opponent move: {}", e.what());
+            return opponent->position; // Default to opponent's current position
         }
+    }
 
-        return space; // Returns a measure of how "open" the area is
+    // Calculate available space
+    int calculateAvailableSpace(sf::Vector2i pos) {
+        try {
+            int space = 0;
+            std::queue<sf::Vector2i> toVisit;
+            std::set<sf::Vector2i, Vector2Comparator> visited;
+
+            toVisit.push(pos);
+            visited.insert(pos);
+
+            while (!toVisit.empty() && space < 20) {
+                sf::Vector2i current = toVisit.front();
+                toVisit.pop();
+                space++;
+
+                for (Direction direction : {Direction::north, Direction::east, Direction::south, Direction::west}) {
+                    sf::Vector2i neighbor = current + getDirectionVector(direction);
+                    if (state.isInsideGrid(neighbor) && state.isCellEmpty(neighbor) &&
+                        visited.find(neighbor) == visited.end()) {
+                        visited.insert(neighbor);
+                        toVisit.push(neighbor);
+                    }
+                }
+            }
+
+            return space;
+        } catch (const std::exception &e) {
+            spdlog::error("Error calculating available space: {}", e.what());
+            return 0; // Default to no space
+        }
     }
 
     // Check if the bot is in a tight spot
@@ -112,34 +127,37 @@ class AggressiveTargetBot {
 
     // Rank potential moves with additional survival considerations
     Direction decideBestMove(sf::Vector2i target, sf::Vector2i predictedOpponentPos) {
-        std::vector<std::pair<Direction, int>> rankedMoves;
-        sf::Vector2i myPos = myPlayer.position;
+        try {
+            std::vector<std::pair<Direction, int>> rankedMoves;
+            sf::Vector2i myPos = myPlayer.position;
 
-        for (Direction direction : {Direction::north, Direction::east, Direction::south, Direction::west}) {
-            sf::Vector2i newPos = myPos + getDirectionVector(direction);
+            for (Direction direction : {Direction::north, Direction::east, Direction::south, Direction::west}) {
+                sf::Vector2i newPos = myPos + getDirectionVector(direction);
 
-            if (state.isInsideGrid(newPos) && state.isCellEmpty(newPos)) {
-                int safetyScore = calculateSafety(newPos);
-                int proximityScore = -calculateDistance(newPos, target); // Negative for closer proximity
-                int trappingScore = calculateTrappingPotential(newPos, predictedOpponentPos);
-                int spaceScore = calculateAvailableSpace(newPos); // Higher for more open space
+                if (state.isInsideGrid(newPos) && state.isCellEmpty(newPos)) {
+                    int safetyScore = calculateSafety(newPos);
+                    int proximityScore = -calculateDistance(newPos, target); // Negative for closer proximity
+                    int trappingScore = calculateTrappingPotential(newPos, predictedOpponentPos);
+                    int spaceScore = calculateAvailableSpace(newPos);
 
-                // Combine scores
-                int totalScore = safetyScore + proximityScore + trappingScore + spaceScore;
-                rankedMoves.emplace_back(direction, totalScore);
+                    int totalScore = safetyScore + proximityScore + trappingScore + spaceScore;
+                    rankedMoves.emplace_back(direction, totalScore);
+                }
             }
+
+            std::sort(rankedMoves.begin(), rankedMoves.end(),
+                      [](const auto &a, const auto &b) { return a.second > b.second; });
+
+            if (!rankedMoves.empty()) {
+                return rankedMoves.front().first;
+            }
+
+            spdlog::warn("No valid moves found, defaulting to random direction.");
+            return randomDirection();
+        } catch (const std::exception &e) {
+            spdlog::error("Error deciding best move: {}", e.what());
+            return randomDirection(); // Default fallback
         }
-
-        // Sort moves by combined score
-        std::sort(rankedMoves.begin(), rankedMoves.end(),
-                  [](const auto &a, const auto &b) { return a.second > b.second; });
-
-        // Return best-ranked move or fallback
-        if (!rankedMoves.empty()) {
-            return rankedMoves.front().first;
-        }
-
-        return randomDirection(); // Fallback if no good moves are found
     }
 
     // Calculate a safety score for a position
@@ -180,14 +198,22 @@ class AggressiveTargetBot {
         return Direction::north; // Default fallback
     }
 
-    // Update the bot's state with the current game state
+    // Update the bot's state
     void updateState() {
-        state = connection.receiveGameState();
-        for (const auto &player : state.players) {
-            if (player.name == name) {
-                myPlayer = player;
-                break;
+        try {
+            state = connection.receiveGameState();
+            for (const auto &player : state.players) {
+                if (player.name == name) {
+                    myPlayer = player;
+                    return;
+                }
             }
+            throw BotException("Bot player state not found in GameState.");
+        } catch (const BotException &e) {
+            spdlog::critical("Critical error in updateState: {}", e.what());
+            throw; // Re-throw critical exception to terminate
+        } catch (const std::exception &e) {
+            spdlog::error("Error updating state: {}", e.what());
         }
     }
 
