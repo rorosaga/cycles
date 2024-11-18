@@ -1,4 +1,4 @@
-export CYCLES_PORT=50017
+export CYCLES_PORT=50020
 
 export LIBGL_ALWAYS_SOFTWARE=true
 
@@ -15,7 +15,8 @@ EOF
 ./build/bin/server &
 sleep 1
 
-for i in {1..10}
+for i in {1..5}
 do
 ./build/bin/client randomio$i &
 done
+./build/bin/clientrorosaga rorosaga &
